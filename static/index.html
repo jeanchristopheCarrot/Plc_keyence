@@ -1,0 +1,122 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Keyence PLC Register UI</title>
+    <link rel="stylesheet" href="/static/styles.css" />
+  </head>
+  <body>
+    <main class="container">
+      <h1>Keyence PLC Register UI</h1>
+      <p class="subtitle">
+        Read and write registers in simulator mode or through TCP/IP.
+      </p>
+
+      <section class="card">
+        <h2>Connection Mode</h2>
+        <div class="mode-switch">
+          <label>
+            <input
+              type="radio"
+              name="mode"
+              value="simulator"
+              checked
+            />Simulator
+          </label>
+          <label>
+            <input type="radio" name="mode" value="tcp" />TCP/IP
+          </label>
+        </div>
+      </section>
+
+      <section id="tcpSettings" class="card hidden">
+        <h2>TCP/IP Settings</h2>
+        <div class="grid">
+          <label>
+            Host
+            <input id="host" type="text" value="127.0.0.1" />
+          </label>
+          <label>
+            Port
+            <input id="port" type="number" value="8501" />
+          </label>
+          <label>
+            Timeout (seconds)
+            <input id="timeoutSeconds" type="number" step="0.1" value="1.5" />
+          </label>
+          <label>
+            Encoding
+            <input id="encoding" type="text" value="ascii" />
+          </label>
+        </div>
+      </section>
+
+      <section id="protocolSettings" class="card hidden">
+        <h2>Command Templates</h2>
+        <p class="hint">
+          Adjust templates to match your PLC command format. Placeholders:
+          <code>{register}</code> and <code>{value}</code>.
+        </p>
+        <div class="grid">
+          <label>
+            Read Template
+            <input id="readTemplate" type="text" value="RD {register}" />
+          </label>
+          <label>
+            Write Template
+            <input id="writeTemplate" type="text" value="WR {register} {value}" />
+          </label>
+          <label>
+            Terminator
+            <input id="terminator" type="text" value="\r\n" />
+          </label>
+        </div>
+      </section>
+
+      <section class="card">
+        <h2>Register Access</h2>
+        <div class="grid">
+          <label>
+            Register
+            <input id="register" type="text" value="DM0" />
+          </label>
+          <label>
+            Value to write
+            <input id="writeValue" type="number" value="0" />
+          </label>
+        </div>
+        <div class="actions">
+          <button id="readBtn" type="button">Read Register</button>
+          <button id="writeBtn" type="button">Write Register</button>
+        </div>
+
+        <div class="result-row">
+          <span>Last Read Value:</span>
+          <strong id="lastReadValue">N/A</strong>
+        </div>
+      </section>
+
+      <section class="card">
+        <h2>Simulator Snapshot</h2>
+        <button id="refreshSimulatorBtn" type="button">Refresh Registers</button>
+        <table id="simulatorTable">
+          <thead>
+            <tr>
+              <th>Register</th>
+              <th>Value</th>
+            </tr>
+          </thead>
+          <tbody></tbody>
+        </table>
+      </section>
+
+      <section class="card">
+        <h2>Operation Log</h2>
+        <pre id="log"></pre>
+      </section>
+    </main>
+
+    <script src="/static/app.js"></script>
+  </body>
+</html>
