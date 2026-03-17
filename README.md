@@ -8,6 +8,7 @@ Simple web UI to read and write PLC registers in:
 ## Run
 
 ```bash
+python3 -m pip install -r requirements.txt
 python3 app.py --port 8080
 ```
 
@@ -32,7 +33,7 @@ http://127.0.0.1:8080
   - Write template (default: `WR {register} {value}`)
   - Terminator (default: `\r\n`)
 - Upload a Keyence ZIP/CSV file and preload simulator registers
-- Sequence dropdowns for 3100 / 3200 / 3250 / 3300 register groups
+- Upload an EventTypeList file and decode event type/output/input words
 - Operation log for diagnostics
 
 ## Load simulator registers from file
@@ -45,17 +46,21 @@ In the UI, use **Load Simulator Registers from File** and upload one of:
 The app imports `DM*` and `R*` values into simulator memory so your simulator
 reads/writes start from your actual project values.
 
-## Sequence dropdowns
+## Event type decoder
 
-The UI includes a **Sequence Dropdowns** section with one dropdown per sequence.
-By default it provides:
+The UI includes an **Event Type Decoder** section:
 
-- Sequence 3100 (`DM3100`-`DM3199`)
-- Sequence 3200 (`DM3200`-`DM3299`)
-- Sequence 3250 (`DM3250`-`DM3349`)
-- Sequence 3300 (`DM3300`-`DM3399`)
+- Upload `Registers_RevM_EventTypeList_WithAlarmText` (`.xlsx`, `.xlsm`, or `.csv`)
+- The app parses event names and register ranges (e.g. `23480-23489`)
+- It decodes the corresponding DM words from simulator data into:
+  - event type value (first word)
+  - output words (`words[1..4]`)
+  - input words (`words[5..8]`)
+  - active output/input bits
 
-You can customize these sequence groups by editing `static/sequences.json`.
+By default, if no event list file has been uploaded, it includes:
+
+- `Capture Canister - removal` (`DM23480`-`DM23489`)
 
 ## Notes for Keyence PLC communication
 

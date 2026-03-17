@@ -11,13 +11,30 @@ from dataclasses import dataclass
 from http import HTTPStatus
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
+
+from openpyxl import load_workbook
 
 
 ROOT_DIR = Path(__file__).parent
 STATIC_DIR = ROOT_DIR / "static"
 MAX_UPLOAD_BYTES = 120 * 1024 * 1024
 REGISTER_PATTERN = re.compile(r"^(DM|R)\d+$")
+EVENT_RANGE_PATTERN = re.compile(r"(\d{4,6})\s*[-–]\s*(\d{4,6})")
+
+OUTPUT_SIGNAL_NAMES = {
+    0: "Output Signal #1 (00608 pins 3&4)",
+    1: "Output Signal #2 (00609 pins 5&6)",
+    2: "Output Signal #3 (00610 pins 7&8)",
+    3: "Output Signal #4 (00611 pins 9&10)",
+    4: "Output Signal #5 (00612 pins 11&12)",
+    5: "Output Signal #6 (00613 pins 13&14)",
+    6: "Output Signal #7 (00614 pins 15&16)",
+    7: "Output Signal #8 (00615 pins 17&18)",
+    8: "Output Signal #9 (00700 pins 19&20)",
+    9: "Output Signal #10 (00701 pins 21&22)",
+    10: "Output Signal #11 (00702 pins 23&24)",
+}
 
 
 def decode_escapes(value: str) -> str:
@@ -90,6 +107,33 @@ class SimulatorStore:
         return len(sanitized)
 
 
+@dataclass
+class EventDefinition:
+    name: str
+    start: int
+    end: int
+
+
+class EventDefinitionStore:
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._definitions: List[EventDefinition] = [
+            EventDefinition(
+                name="Capture Canister - removal",
+                start=23480,
+                end=23489,
+            )
+        ]
+
+    def get_all(self) -> List[EventDefinition]:
+        with self._lock:
+            return list(self._definitions)
+
+    def replace(self, new_definitions: List[EventDefinition]) -> None:
+        with self._lock:
+            self._definitions = list(new_definitions)
+
+
 class PlcTcpClient:
     def __init__(self, conn: TcpConnectionConfig, protocol: ProtocolConfig) -> None:
         self.conn = conn
@@ -139,6 +183,7 @@ class PlcTcpClient:
 
 
 SIMULATOR = SimulatorStore()
+EVENT_DEFINITIONS = EventDefinitionStore()
 
 
 def parse_numeric_value(raw_value: str) -> Optional[int]:
@@ -234,6 +279,169 @@ def parse_uploaded_register_file(
     return registers, metadata
 
 
+def is_register_address_candidate(value: int) -> bool:
+    return 1000 <= value <= 999999
+
+
+def parse_event_definitions_from_csv(raw_bytes: bytes) -> List[EventDefinition]:
+    content = decode_csv_bytes(raw_bytes)
+    reader = csv.reader(io.StringIO(content))
+    parsed: List[EventDefinition] = []
+    seen = set()
+
+    for row in reader:
+        cells = [str(cell).strip() for cell in row if str(cell).strip()]
+        if not cells:
+            continue
+
+        joined = " | ".join(cells)
+        match = EVENT_RANGE_PATTERN.search(joined)
+        start = None
+        end = None
+        if match:
+            start = int(match.group(1))
+            end = int(match.group(2))
+        else:
+            nums = []
+            for cell in cells:
+                if re.fullmatch(r"\d{4,6}", cell):
+                    nums.append(int(cell))
+            if len(nums) >= 2:
+                start, end = nums[0], nums[1]
+
+        if start is None or end is None:
+            continue
+        if start > end:
+            start, end = end, start
+        if not is_register_address_candidate(start) or not is_register_address_candidate(
+            end
+        ):
+            continue
+        if end - start > 400:
+            continue
+
+        name = next(
+            (
+                cell
+                for cell in cells
+                if re.search(r"[A-Za-z]", cell) and not EVENT_RANGE_PATTERN.search(cell)
+            ),
+            f"Event {start}-{end}",
+        )
+        key = (name, start, end)
+        if key in seen:
+            continue
+        seen.add(key)
+        parsed.append(EventDefinition(name=name, start=start, end=end))
+
+    parsed.sort(key=lambda item: (item.start, item.end, item.name.lower()))
+    return parsed
+
+
+def parse_event_definitions_from_xlsx(raw_bytes: bytes) -> List[EventDefinition]:
+    workbook = load_workbook(io.BytesIO(raw_bytes), data_only=True, read_only=True)
+    parsed: List[EventDefinition] = []
+    seen = set()
+
+    for sheet in workbook.worksheets:
+        for row in sheet.iter_rows(values_only=True):
+            cells = [str(cell).strip() for cell in row if cell is not None and str(cell).strip()]
+            if not cells:
+                continue
+
+            joined = " | ".join(cells)
+            match = EVENT_RANGE_PATTERN.search(joined)
+            start = None
+            end = None
+            if match:
+                start = int(match.group(1))
+                end = int(match.group(2))
+            else:
+                nums = []
+                for cell in cells:
+                    if re.fullmatch(r"\d{4,6}", cell):
+                        nums.append(int(cell))
+                if len(nums) >= 2:
+                    start, end = nums[0], nums[1]
+
+            if start is None or end is None:
+                continue
+            if start > end:
+                start, end = end, start
+            if not is_register_address_candidate(start) or not is_register_address_candidate(
+                end
+            ):
+                continue
+            if end - start > 400:
+                continue
+
+            name = next(
+                (
+                    cell
+                    for cell in cells
+                    if re.search(r"[A-Za-z]", cell)
+                    and not EVENT_RANGE_PATTERN.search(cell)
+                ),
+                f"Event {start}-{end}",
+            )
+            key = (name, start, end)
+            if key in seen:
+                continue
+            seen.add(key)
+            parsed.append(EventDefinition(name=name, start=start, end=end))
+
+    parsed.sort(key=lambda item: (item.start, item.end, item.name.lower()))
+    return parsed
+
+
+def parse_uploaded_event_list_file(filename: str, payload: bytes) -> List[EventDefinition]:
+    suffix = Path(filename).suffix.lower()
+    if suffix in (".xlsx", ".xlsm"):
+        return parse_event_definitions_from_xlsx(payload)
+    if suffix == ".csv":
+        return parse_event_definitions_from_csv(payload)
+    raise ValueError("Only .xlsx, .xlsm, and .csv files are supported for event list")
+
+
+def decode_active_bits(words: List[int]) -> List[int]:
+    active = []
+    for word_index, word in enumerate(words):
+        value = int(word) & 0xFFFF
+        for bit in range(16):
+            if value & (1 << bit):
+                active.append(word_index * 16 + bit)
+    return active
+
+
+def decode_event_definition(definition: EventDefinition, registers: Dict[str, int]) -> Dict[str, Any]:
+    words = [int(registers.get(f"DM{addr}", 0)) for addr in range(definition.start, definition.end + 1)]
+    event_type_value = words[0] if words else 0
+    output_words = words[1:5] if len(words) > 1 else []
+    input_words = words[5:9] if len(words) > 5 else []
+    control_words = words[9:] if len(words) > 9 else []
+
+    output_bits = decode_active_bits(output_words)
+    input_bits = decode_active_bits(input_words)
+    named_outputs = [
+        OUTPUT_SIGNAL_NAMES[bit] for bit in output_bits if bit in OUTPUT_SIGNAL_NAMES
+    ]
+
+    return {
+        "name": definition.name,
+        "start": definition.start,
+        "end": definition.end,
+        "wordCount": len(words),
+        "eventTypeValue": event_type_value,
+        "rawWords": words,
+        "outputWords": output_words,
+        "inputWords": input_words,
+        "controlWords": control_words,
+        "activeOutputBits": output_bits,
+        "activeInputBits": input_bits,
+        "namedActiveOutputs": named_outputs,
+    }
+
+
 class RequestHandler(SimpleHTTPRequestHandler):
     def __init__(self, *args: Any, **kwargs: Any) -> None:
         super().__init__(*args, directory=str(ROOT_DIR), **kwargs)
@@ -245,6 +453,8 @@ class RequestHandler(SimpleHTTPRequestHandler):
 
         if self.path == "/api/simulator/registers":
             return self._send_json(HTTPStatus.OK, {"registers": SIMULATOR.snapshot()})
+        if self.path == "/api/event-definitions":
+            return self._handle_get_event_definitions()
 
         return super().do_GET()
 
@@ -255,6 +465,8 @@ class RequestHandler(SimpleHTTPRequestHandler):
             return self._handle_write()
         if self.path == "/api/upload-register-file":
             return self._handle_upload_register_file()
+        if self.path == "/api/upload-event-list":
+            return self._handle_upload_event_list()
         return self._send_json(HTTPStatus.NOT_FOUND, {"error": "Unknown endpoint"})
 
     def _handle_read(self) -> None:
@@ -437,6 +649,78 @@ class RequestHandler(SimpleHTTPRequestHandler):
                 "matchedRows": metadata["matchedRows"],
                 "loadedRows": metadata["loadedRows"],
                 "skippedRows": metadata["skippedRows"],
+            },
+        )
+
+    def _handle_upload_event_list(self) -> None:
+        content_len_header = self.headers.get("Content-Length")
+        if not content_len_header:
+            return self._send_json(
+                HTTPStatus.BAD_REQUEST, {"error": "Missing Content-Length"}
+            )
+
+        try:
+            content_length = int(content_len_header)
+        except ValueError:
+            return self._send_json(
+                HTTPStatus.BAD_REQUEST, {"error": "Invalid Content-Length"}
+            )
+
+        if content_length <= 0:
+            return self._send_json(
+                HTTPStatus.BAD_REQUEST, {"error": "Uploaded file is empty"}
+            )
+        if content_length > MAX_UPLOAD_BYTES:
+            return self._send_json(
+                HTTPStatus.BAD_REQUEST,
+                {
+                    "error": (
+                        f"File is too large ({content_length} bytes). "
+                        f"Max supported size is {MAX_UPLOAD_BYTES} bytes."
+                    )
+                },
+            )
+
+        raw_payload = self.rfile.read(content_length)
+        filename = Path(self.headers.get("X-Filename", "event-list.bin")).name
+
+        try:
+            definitions = parse_uploaded_event_list_file(filename, raw_payload)
+            if not definitions:
+                raise ValueError("No event/register ranges found in file")
+            EVENT_DEFINITIONS.replace(definitions)
+        except Exception as exc:
+            return self._send_json(
+                HTTPStatus.BAD_REQUEST,
+                {"error": f"Unable to import event list file: {exc}"},
+            )
+
+        return self._send_json(
+            HTTPStatus.OK,
+            {
+                "message": "Event list imported successfully",
+                "loadedEvents": len(definitions),
+                "firstEvent": {
+                    "name": definitions[0].name,
+                    "start": definitions[0].start,
+                    "end": definitions[0].end,
+                },
+            },
+        )
+
+    def _handle_get_event_definitions(self) -> None:
+        definitions = EVENT_DEFINITIONS.get_all()
+        registers = SIMULATOR.snapshot()
+        decoded = [decode_event_definition(defn, registers) for defn in definitions]
+        return self._send_json(
+            HTTPStatus.OK,
+            {
+                "events": decoded,
+                "notes": [
+                    "Decoding uses DM[start..end] words.",
+                    "eventTypeValue=first word, outputs=words[1..4], inputs=words[5..8].",
+                    "Load simulator registers from PlcDeviceValue first for accurate values.",
+                ],
             },
         )
 

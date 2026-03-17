@@ -125,12 +125,38 @@
       </section>
 
       <section class="card">
-        <h2>Sequence Dropdowns</h2>
+        <h2>Event Type Decoder</h2>
         <p class="hint">
-          Pick registers by sequence group (3100/3200/3250/3300), then load that
-          register into the read/write panel.
+          Upload <code>Registers_RevM_EventTypeList_WithAlarmText</code> (.xlsx or
+          .csv), then pick an event to decode its event type, outputs, and inputs
+          using the loaded simulator DM registers.
         </p>
-        <div id="sequenceDropdowns" class="sequence-grid"></div>
+        <div class="grid">
+          <label>
+            Event list file
+            <input id="eventListFileInput" type="file" accept=".xlsx,.xlsm,.csv" />
+          </label>
+        </div>
+        <div class="actions">
+          <button id="uploadEventListBtn" type="button">Upload Event List</button>
+        </div>
+        <div class="result-row">
+          <span>Event List Status:</span>
+          <strong id="eventListStatus">Using default mapping</strong>
+        </div>
+        <div class="grid">
+          <label>
+            Event dropdown
+            <select id="eventDefinitionSelect"></select>
+          </label>
+        </div>
+        <div class="actions">
+          <button id="useEventStartRegisterBtn" type="button">
+            Use Event Start Register
+          </button>
+          <button id="refreshEventDecodeBtn" type="button">Refresh Event Decode</button>
+        </div>
+        <pre id="eventDecodeLog"></pre>
       </section>
 
       <section class="card">
