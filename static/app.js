@@ -18,6 +18,9 @@ const readBtn = document.getElementById("readBtn");
 const writeBtn = document.getElementById("writeBtn");
 const refreshSimulatorBtn = document.getElementById("refreshSimulatorBtn");
 const simulatorTableBody = document.querySelector("#simulatorTable tbody");
+const registerFileInput = document.getElementById("registerFileInput");
+const uploadRegisterFileBtn = document.getElementById("uploadRegisterFileBtn");
+const importStatus = document.getElementById("importStatus");
 const localSimulatorRegisters = {
   DM0: 0,
   DM1: 100,
@@ -179,6 +182,43 @@ async function loadSimulatorRegisters() {
   }
 }
 
+async function handleRegisterFileUpload() {
+  const [file] = registerFileInput.files || [];
+  if (!file) {
+    appendLog("Upload blocked: select a .zip or .csv file first.");
+    return;
+  }
+
+  uploadRegisterFileBtn.disabled = true;
+  uploadRegisterFileBtn.textContent = "Uploading...";
+
+  try {
+    const response = await fetch("/api/upload-register-file", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/octet-stream",
+        "X-Filename": file.name,
+      },
+      body: file,
+    });
+
+    const data = await response.json();
+    if (!response.ok) {
+      throw new Error(data.error || "Upload failed");
+    }
+
+    importStatus.textContent = `${data.loadedRegisters} registers loaded from ${data.sourceFile}`;
+    appendLog("Simulator register import completed", data);
+    await loadSimulatorRegisters();
+  } catch (error) {
+    importStatus.textContent = `Import failed: ${error.message}`;
+    appendLog(`Simulator register import failed: ${error.message}`);
+  } finally {
+    uploadRegisterFileBtn.disabled = false;
+    uploadRegisterFileBtn.textContent = "Upload and Load Simulator";
+  }
+}
+
 function renderSimulatorRows(registers) {
   simulatorTableBody.innerHTML = "";
   Object.entries(registers)
@@ -199,6 +239,7 @@ modeInputs.forEach((input) => input.addEventListener("change", renderMode));
 readBtn.addEventListener("click", handleRead);
 writeBtn.addEventListener("click", handleWrite);
 refreshSimulatorBtn.addEventListener("click", loadSimulatorRegisters);
+uploadRegisterFileBtn.addEventListener("click", handleRegisterFileUpload);
 
 renderMode();
 loadSimulatorRegisters();
