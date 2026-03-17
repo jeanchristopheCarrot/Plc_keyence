@@ -56,6 +56,11 @@ The UI includes an **Event Type Decoder** section:
 - UI provides:
   - Sequence dropdown (column K values)
   - EventTrigger block dropdown (per sequence)
+- Sequence decode table with columns:
+  - EventType
+  - Outputs ON
+  - Inputs ON
+  - AlarmCode / AlarmText
 - It decodes each selected block from simulator DM values into:
   - event type value (first word)
   - output words (`words[1..4]`)

@@ -113,6 +113,25 @@ button:hover {
   font-size: 14px;
 }
 
+#sequenceDecodeTable {
+  width: 100%;
+  margin-top: 12px;
+  border-collapse: collapse;
+}
+
+#sequenceDecodeTable th,
+#sequenceDecodeTable td {
+  border: 1px solid #d5dce4;
+  text-align: left;
+  vertical-align: top;
+  padding: 8px;
+  font-size: 13px;
+}
+
+#sequenceDecodeTable .selected-row {
+  background: #eef5ff;
+}
+
 #log {
   margin: 0;
   max-height: 260px;

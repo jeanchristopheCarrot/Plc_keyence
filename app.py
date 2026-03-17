@@ -7,7 +7,7 @@ import re
 import socket
 import threading
 import zipfile
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from http import HTTPStatus
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -115,6 +115,7 @@ class EventDefinition:
     end: int
     row_number: int
     event_type_code: Optional[int]
+    alarm_items: List[str] = field(default_factory=list)
 
 
 class EventDefinitionStore:
@@ -128,6 +129,7 @@ class EventDefinitionStore:
                 end=23489,
                 row_number=2349,
                 event_type_code=135,
+                alarm_items=[],
             )
         ]
 
@@ -341,6 +343,7 @@ def parse_event_definitions_from_rows(rows: List[List[Any]]) -> List[EventDefini
                 "labels": [],
                 "eventTypeCodes": [],
                 "firstDecimalValue": None,
+                "alarmItems": set(),
             },
         )
         item["registers"].append(register)
@@ -350,6 +353,17 @@ def parse_event_definitions_from_rows(rows: List[List[Any]]) -> List[EventDefini
             item["eventTypeCodes"].append(event_type_code)
         if column_letter == "C" and decimal_value is not None:
             item["firstDecimalValue"] = decimal_value
+        alarm_code = parse_int(values[15] if len(values) > 15 else None)
+        alarm_text = (
+            str(values[16]).strip()
+            if len(values) > 16 and values[16] is not None
+            else ""
+        )
+        if alarm_code is not None or alarm_text:
+            if alarm_text:
+                item["alarmItems"].add(f"{alarm_code if alarm_code is not None else '?'}: {alarm_text}")
+            elif alarm_code is not None:
+                item["alarmItems"].add(str(alarm_code))
 
     parsed: List[EventDefinition] = []
     for (sequence, row_number), item in grouped.items():
@@ -376,6 +390,7 @@ def parse_event_definitions_from_rows(rows: List[List[Any]]) -> List[EventDefini
                 end=end,
                 row_number=row_number,
                 event_type_code=event_code,
+                alarm_items=sorted(item["alarmItems"]),
             )
         )
 
@@ -414,6 +429,7 @@ def parse_event_definitions_from_csv(raw_bytes: bytes) -> List[EventDefinition]:
                 end=end,
                 row_number=start // 10,
                 event_type_code=None,
+                alarm_items=[],
             )
         )
     range_based.sort(key=lambda item: (item.sequence.lower(), item.start))
@@ -483,6 +499,10 @@ def decode_event_definition(definition: EventDefinition, registers: Dict[str, in
     named_outputs = [
         OUTPUT_SIGNAL_NAMES[bit] for bit in output_bits if bit in OUTPUT_SIGNAL_NAMES
     ]
+    outputs_on = named_outputs + [
+        f"Output Bit {bit}" for bit in output_bits if bit not in OUTPUT_SIGNAL_NAMES
+    ]
+    inputs_on = [f"Input Bit {bit}" for bit in input_bits]
 
     return {
         "sequence": definition.sequence,
@@ -500,6 +520,9 @@ def decode_event_definition(definition: EventDefinition, registers: Dict[str, in
         "activeOutputBits": output_bits,
         "activeInputBits": input_bits,
         "namedActiveOutputs": named_outputs,
+        "outputsOn": outputs_on,
+        "inputsOn": inputs_on,
+        "alarmItems": definition.alarm_items,
     }
 
 

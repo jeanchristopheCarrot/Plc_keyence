@@ -30,6 +30,7 @@ const eventBlockSelect = document.getElementById("eventBlockSelect");
 const useEventStartRegisterBtn = document.getElementById("useEventStartRegisterBtn");
 const refreshEventDecodeBtn = document.getElementById("refreshEventDecodeBtn");
 const eventDecodeLog = document.getElementById("eventDecodeLog");
+const sequenceDecodeTableBody = document.querySelector("#sequenceDecodeTable tbody");
 
 const localSimulatorRegisters = {
   DM0: 0,
@@ -283,10 +284,59 @@ function renderEventDecode(block = null) {
   );
 }
 
+function renderSequenceTable(sequence, selectedBlockIndex = 0) {
+  sequenceDecodeTableBody.innerHTML = "";
+  if (!sequence || !Array.isArray(sequence.blocks)) {
+    return;
+  }
+
+  sequence.blocks.forEach((block, idx) => {
+    const row = document.createElement("tr");
+    if (idx === selectedBlockIndex) {
+      row.classList.add("selected-row");
+    }
+
+    const blockCell = document.createElement("td");
+    blockCell.textContent = `${block.label} (DM${block.start}-DM${block.end})`;
+
+    const eventTypeCell = document.createElement("td");
+    eventTypeCell.textContent =
+      block.eventTypeCode === null || block.eventTypeCode === undefined
+        ? String(block.eventTypeValue)
+        : `${block.eventTypeValue} (code ${block.eventTypeCode})`;
+
+    const outputsCell = document.createElement("td");
+    outputsCell.textContent =
+      block.outputsOn && block.outputsOn.length > 0
+        ? block.outputsOn.join(", ")
+        : "None";
+
+    const inputsCell = document.createElement("td");
+    inputsCell.textContent =
+      block.inputsOn && block.inputsOn.length > 0
+        ? block.inputsOn.join(", ")
+        : "None";
+
+    const alarmCell = document.createElement("td");
+    alarmCell.textContent =
+      block.alarmItems && block.alarmItems.length > 0
+        ? block.alarmItems.join(" | ")
+        : "-";
+
+    row.appendChild(blockCell);
+    row.appendChild(eventTypeCell);
+    row.appendChild(outputsCell);
+    row.appendChild(inputsCell);
+    row.appendChild(alarmCell);
+    sequenceDecodeTableBody.appendChild(row);
+  });
+}
+
 function renderBlockOptions() {
   const sequence = selectedSequence();
   eventBlockSelect.innerHTML = "";
   if (!sequence || !Array.isArray(sequence.blocks) || sequence.blocks.length === 0) {
+    renderSequenceTable(null, -1);
     renderEventDecode(null);
     return;
   }
@@ -298,6 +348,7 @@ function renderBlockOptions() {
     eventBlockSelect.appendChild(option);
   });
 
+  renderSequenceTable(sequence, 0);
   renderEventDecode(sequence.blocks[0]);
 }
 
@@ -384,6 +435,9 @@ uploadEventListBtn.addEventListener("click", handleEventListUpload);
 
 sequenceDefinitionSelect.addEventListener("change", renderBlockOptions);
 eventBlockSelect.addEventListener("change", () => {
+  const sequence = selectedSequence();
+  const selectedIndex = Number(eventBlockSelect.value);
+  renderSequenceTable(sequence, Number.isInteger(selectedIndex) ? selectedIndex : 0);
   renderEventDecode(selectedBlock());
 });
 useEventStartRegisterBtn.addEventListener("click", () => {
