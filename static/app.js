@@ -21,7 +21,17 @@ const simulatorTableBody = document.querySelector("#simulatorTable tbody");
 const registerFileInput = document.getElementById("registerFileInput");
 const uploadRegisterFileBtn = document.getElementById("uploadRegisterFileBtn");
 const importStatus = document.getElementById("importStatus");
-const sequenceDropdowns = document.getElementById("sequenceDropdowns");
+
+const eventListFileInput = document.getElementById("eventListFileInput");
+const uploadEventListBtn = document.getElementById("uploadEventListBtn");
+const eventListStatus = document.getElementById("eventListStatus");
+const sequenceDefinitionSelect = document.getElementById("sequenceDefinitionSelect");
+const eventBlockSelect = document.getElementById("eventBlockSelect");
+const useEventStartRegisterBtn = document.getElementById("useEventStartRegisterBtn");
+const refreshEventDecodeBtn = document.getElementById("refreshEventDecodeBtn");
+const eventDecodeLog = document.getElementById("eventDecodeLog");
+const sequenceDecodeTableBody = document.querySelector("#sequenceDecodeTable tbody");
+
 const localSimulatorRegisters = {
   DM0: 0,
   DM1: 100,
@@ -30,13 +40,8 @@ const localSimulatorRegisters = {
   R1: 1,
   R2: 0,
 };
-const defaultSequenceDefinitions = [
-  { key: "3100", label: "Sequence 3100", start: 3100, end: 3199 },
-  { key: "3200", label: "Sequence 3200", start: 3200, end: 3299 },
-  { key: "3250", label: "Sequence 3250", start: 3250, end: 3349 },
-  { key: "3300", label: "Sequence 3300", start: 3300, end: 3399 },
-];
-let sequenceDefinitions = [...defaultSequenceDefinitions];
+
+let decodedSequences = [];
 
 function normalizeRegister(register) {
   return (register || "").trim().toUpperCase();
@@ -45,106 +50,6 @@ function normalizeRegister(register) {
 function currentMode() {
   const selected = modeInputs.find((input) => input.checked);
   return selected ? selected.value : "simulator";
-}
-
-function getSequenceRegisters(start, end) {
-  const registers = [];
-  for (let address = start; address <= end; address += 1) {
-    registers.push(`DM${address}`);
-  }
-  return registers;
-}
-
-function renderSequenceDropdowns() {
-  sequenceDropdowns.innerHTML = "";
-  sequenceDefinitions.forEach((sequence) => {
-    const card = document.createElement("div");
-    card.className = "sequence-card";
-
-    const title = document.createElement("h3");
-    title.textContent = sequence.label;
-
-    const info = document.createElement("p");
-    info.className = "hint";
-    info.textContent = `DM${sequence.start} - DM${sequence.end}`;
-
-    const select = document.createElement("select");
-    select.className = "sequence-register-select";
-
-    getSequenceRegisters(sequence.start, sequence.end).forEach((register) => {
-      const option = document.createElement("option");
-      option.value = register;
-      option.textContent = register;
-      select.appendChild(option);
-    });
-
-    const actions = document.createElement("div");
-    actions.className = "actions";
-
-    const useBtn = document.createElement("button");
-    useBtn.type = "button";
-    useBtn.textContent = "Use Register";
-    useBtn.addEventListener("click", () => {
-      registerInput.value = select.value;
-      appendLog(`Selected ${select.value} from ${sequence.label}`);
-    });
-
-    const readBtn = document.createElement("button");
-    readBtn.type = "button";
-    readBtn.textContent = "Read Selected";
-    readBtn.addEventListener("click", async () => {
-      registerInput.value = select.value;
-      await handleRead();
-    });
-
-    actions.appendChild(useBtn);
-    actions.appendChild(readBtn);
-
-    card.appendChild(title);
-    card.appendChild(info);
-    card.appendChild(select);
-    card.appendChild(actions);
-    sequenceDropdowns.appendChild(card);
-  });
-}
-
-async function loadSequenceDefinitions() {
-  try {
-    const response = await fetch("/static/sequences.json", { cache: "no-store" });
-    if (!response.ok) {
-      throw new Error(`sequence config not found (${response.status})`);
-    }
-    const data = await response.json();
-    if (!Array.isArray(data)) {
-      throw new Error("sequence config must be a JSON array");
-    }
-
-    const parsed = data
-      .map((item) => {
-        const start = Number(item.start);
-        const end = Number(item.end);
-        if (!item || !Number.isInteger(start) || !Number.isInteger(end) || start > end) {
-          return null;
-        }
-        return {
-          key: String(item.key || item.label || start),
-          label: String(item.label || `Sequence ${start}`),
-          start,
-          end,
-        };
-      })
-      .filter(Boolean);
-
-    if (parsed.length > 0) {
-      sequenceDefinitions = parsed;
-    }
-  } catch (error) {
-    appendLog("Using default sequence dropdown definitions", {
-      reason: error.message,
-    });
-  }
-
-  renderSequenceDropdowns();
 }
 
 function appendLog(message, details = null) {
@@ -220,13 +125,10 @@ async function handleRead() {
         ? localSimulatorRegisters[register]
         : 0;
       lastReadValue.textContent = value;
-      appendLog(
-        `Read ${register} (simulator local fallback)`,
-        {
-          value,
-          reason: error.message,
-        }
-      );
+      appendLog(`Read ${register} (simulator local fallback)`, {
+        value,
+        reason: error.message,
+      });
       await loadSimulatorRegisters();
       return;
     }
@@ -261,69 +163,13 @@ async function handleWrite() {
   } catch (error) {
     if (payload.mode === "simulator") {
       localSimulatorRegisters[register] = value;
-      appendLog(
-        `Wrote ${value} to ${register} (simulator local fallback)`,
-        {
-          reason: error.message,
-        }
-      );
+      appendLog(`Wrote ${value} to ${register} (simulator local fallback)`, {
+        reason: error.message,
+      });
       await loadSimulatorRegisters();
       return;
     }
     appendLog(`Write failed for ${register}: ${error.message}`);
-  }
-}
-
-async function loadSimulatorRegisters() {
-  try {
-    const response = await fetch("/api/simulator/registers");
-    const data = await response.json();
-    simulatorTableBody.innerHTML = "";
-    Object.assign(localSimulatorRegisters, data.registers || {});
-    renderSimulatorRows(localSimulatorRegisters);
-  } catch (error) {
-    renderSimulatorRows(localSimulatorRegisters);
-    appendLog(
-      "Using simulator local fallback snapshot",
-      { reason: error.message }
-    );
-  }
-}
-
-async function handleRegisterFileUpload() {
-  const [file] = registerFileInput.files || [];
-  if (!file) {
-    appendLog("Upload blocked: select a .zip or .csv file first.");
-    return;
-  }
-
-  uploadRegisterFileBtn.disabled = true;
-  uploadRegisterFileBtn.textContent = "Uploading...";
-
-  try {
-    const response = await fetch("/api/upload-register-file", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/octet-stream",
-        "X-Filename": file.name,
-      },
-      body: file,
-    });
-
-    const data = await response.json();
-    if (!response.ok) {
-      throw new Error(data.error || "Upload failed");
-    }
-
-    importStatus.textContent = `${data.loadedRegisters} registers loaded from ${data.sourceFile}`;
-    appendLog("Simulator register import completed", data);
-    await loadSimulatorRegisters();
-  } catch (error) {
-    importStatus.textContent = `Import failed: ${error.message}`;
-    appendLog(`Simulator register import failed: ${error.message}`);
-  } finally {
-    uploadRegisterFileBtn.disabled = false;
-    uploadRegisterFileBtn.textContent = "Upload and Load Simulator";
   }
 }
 
@@ -343,12 +189,267 @@ function renderSimulatorRows(registers) {
     });
 }
 
+async function loadSimulatorRegisters() {
+  try {
+    const response = await fetch("/api/simulator/registers");
+    const data = await response.json();
+    Object.assign(localSimulatorRegisters, data.registers || {});
+    renderSimulatorRows(localSimulatorRegisters);
+  } catch (error) {
+    renderSimulatorRows(localSimulatorRegisters);
+    appendLog("Using simulator local fallback snapshot", {
+      reason: error.message,
+    });
+  }
+}
+
+async function handleRegisterFileUpload() {
+  const [file] = registerFileInput.files || [];
+  if (!file) {
+    appendLog("Upload blocked: select a .zip or .csv file first.");
+    return;
+  }
+
+  uploadRegisterFileBtn.disabled = true;
+  uploadRegisterFileBtn.textContent = "Uploading...";
+  try {
+    const response = await fetch("/api/upload-register-file", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/octet-stream",
+        "X-Filename": file.name,
+      },
+      body: file,
+    });
+    const data = await response.json();
+    if (!response.ok) {
+      throw new Error(data.error || "Upload failed");
+    }
+
+    importStatus.textContent = `${data.loadedRegisters} registers loaded from ${data.sourceFile}`;
+    appendLog("Simulator register import completed", data);
+    await loadSimulatorRegisters();
+    await loadDecodedEvents();
+  } catch (error) {
+    importStatus.textContent = `Import failed: ${error.message}`;
+    appendLog(`Simulator register import failed: ${error.message}`);
+  } finally {
+    uploadRegisterFileBtn.disabled = false;
+    uploadRegisterFileBtn.textContent = "Upload and Load Simulator";
+  }
+}
+
+function selectedSequence() {
+  const idx = Number(sequenceDefinitionSelect.value);
+  if (!Number.isInteger(idx) || idx < 0) {
+    return null;
+  }
+  return decodedSequences[idx] || null;
+}
+
+function selectedBlock() {
+  const sequence = selectedSequence();
+  if (!sequence) {
+    return null;
+  }
+  const blockIdx = Number(eventBlockSelect.value);
+  if (!Number.isInteger(blockIdx) || blockIdx < 0) {
+    return null;
+  }
+  return sequence.blocks?.[blockIdx] || null;
+}
+
+function renderEventDecode(block = null) {
+  if (!block) {
+    eventDecodeLog.textContent = "No EventTrigger block selected.";
+    return;
+  }
+  eventDecodeLog.textContent = JSON.stringify(
+    {
+      sequence: block.sequence,
+      label: block.label,
+      registerRange: `DM${block.start}-DM${block.end}`,
+      rowNumber: block.rowNumber,
+      eventTypeCode: block.eventTypeCode,
+      eventTypeValue: block.eventTypeValue,
+      activeOutputBits: block.activeOutputBits,
+      namedActiveOutputs: block.namedActiveOutputs,
+      activeInputBits: block.activeInputBits,
+      outputWords: block.outputWords,
+      inputWords: block.inputWords,
+      controlWords: block.controlWords,
+    },
+    null,
+    2
+  );
+}
+
+function renderSequenceTable(sequence, selectedBlockIndex = 0) {
+  sequenceDecodeTableBody.innerHTML = "";
+  if (!sequence || !Array.isArray(sequence.blocks)) {
+    return;
+  }
+
+  sequence.blocks.forEach((block, idx) => {
+    const row = document.createElement("tr");
+    if (idx === selectedBlockIndex) {
+      row.classList.add("selected-row");
+    }
+
+    const blockCell = document.createElement("td");
+    blockCell.textContent = `${block.label} (DM${block.start}-DM${block.end})`;
+
+    const eventTypeCell = document.createElement("td");
+    eventTypeCell.textContent =
+      block.eventTypeCode === null || block.eventTypeCode === undefined
+        ? String(block.eventTypeValue)
+        : `${block.eventTypeValue} (code ${block.eventTypeCode})`;
+
+    const outputsCell = document.createElement("td");
+    outputsCell.textContent =
+      block.outputsOn && block.outputsOn.length > 0
+        ? block.outputsOn.join(", ")
+        : "None";
+
+    const inputsCell = document.createElement("td");
+    inputsCell.textContent =
+      block.inputsOn && block.inputsOn.length > 0
+        ? block.inputsOn.join(", ")
+        : "None";
+
+    const alarmCell = document.createElement("td");
+    alarmCell.textContent =
+      block.alarmItems && block.alarmItems.length > 0
+        ? block.alarmItems.join(" | ")
+        : "-";
+
+    row.appendChild(blockCell);
+    row.appendChild(eventTypeCell);
+    row.appendChild(outputsCell);
+    row.appendChild(inputsCell);
+    row.appendChild(alarmCell);
+    sequenceDecodeTableBody.appendChild(row);
+  });
+}
+
+function renderBlockOptions() {
+  const sequence = selectedSequence();
+  eventBlockSelect.innerHTML = "";
+  if (!sequence || !Array.isArray(sequence.blocks) || sequence.blocks.length === 0) {
+    renderSequenceTable(null, -1);
+    renderEventDecode(null);
+    return;
+  }
+
+  sequence.blocks.forEach((block, idx) => {
+    const option = document.createElement("option");
+    option.value = String(idx);
+    option.textContent = `${block.label} (DM${block.start}-DM${block.end})`;
+    eventBlockSelect.appendChild(option);
+  });
+
+  renderSequenceTable(sequence, 0);
+  renderEventDecode(sequence.blocks[0]);
+}
+
+function renderSequenceOptions() {
+  sequenceDefinitionSelect.innerHTML = "";
+  decodedSequences.forEach((sequence, idx) => {
+    const option = document.createElement("option");
+    option.value = String(idx);
+    option.textContent = `${sequence.name} (${sequence.blocks.length} blocks)`;
+    sequenceDefinitionSelect.appendChild(option);
+  });
+  renderBlockOptions();
+}
+
+async function loadDecodedEvents() {
+  try {
+    const response = await fetch("/api/event-definitions", { cache: "no-store" });
+    const data = await response.json();
+    if (!response.ok) {
+      throw new Error(data.error || "Unable to load event definitions");
+    }
+
+    if (Array.isArray(data.sequences)) {
+      decodedSequences = data.sequences;
+    } else if (Array.isArray(data.events)) {
+      // Compatibility with older API structure.
+      decodedSequences = [{ name: "Events", blocks: data.events }];
+    } else {
+      decodedSequences = [];
+    }
+
+    if (decodedSequences.length === 0) {
+      eventDecodeLog.textContent = "No sequences loaded.";
+      return;
+    }
+    renderSequenceOptions();
+  } catch (error) {
+    appendLog(`Failed to load event definitions: ${error.message}`);
+    eventDecodeLog.textContent = `Failed to load event definitions: ${error.message}`;
+  }
+}
+
+async function handleEventListUpload() {
+  const [file] = eventListFileInput.files || [];
+  if (!file) {
+    appendLog("Upload blocked: select event list file first.");
+    return;
+  }
+
+  uploadEventListBtn.disabled = true;
+  uploadEventListBtn.textContent = "Uploading...";
+  try {
+    const response = await fetch("/api/upload-event-list", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/octet-stream",
+        "X-Filename": file.name,
+      },
+      body: file,
+    });
+    const data = await response.json();
+    if (!response.ok) {
+      throw new Error(data.error || "Upload failed");
+    }
+
+    eventListStatus.textContent = `${data.loadedSequences} sequences / ${data.loadedBlocks} blocks`;
+    appendLog("Event list import completed", data);
+    await loadDecodedEvents();
+  } catch (error) {
+    eventListStatus.textContent = `Import failed: ${error.message}`;
+    appendLog(`Event list import failed: ${error.message}`);
+  } finally {
+    uploadEventListBtn.disabled = false;
+    uploadEventListBtn.textContent = "Upload Event List";
+  }
+}
+
 modeInputs.forEach((input) => input.addEventListener("change", renderMode));
 readBtn.addEventListener("click", handleRead);
 writeBtn.addEventListener("click", handleWrite);
 refreshSimulatorBtn.addEventListener("click", loadSimulatorRegisters);
 uploadRegisterFileBtn.addEventListener("click", handleRegisterFileUpload);
+uploadEventListBtn.addEventListener("click", handleEventListUpload);
+
+sequenceDefinitionSelect.addEventListener("change", renderBlockOptions);
+eventBlockSelect.addEventListener("change", () => {
+  const sequence = selectedSequence();
+  const selectedIndex = Number(eventBlockSelect.value);
+  renderSequenceTable(sequence, Number.isInteger(selectedIndex) ? selectedIndex : 0);
+  renderEventDecode(selectedBlock());
+});
+useEventStartRegisterBtn.addEventListener("click", () => {
+  const block = selectedBlock();
+  if (!block) {
+    return;
+  }
+  registerInput.value = `DM${block.start}`;
+  appendLog(`Selected DM${block.start} from ${block.sequence} / ${block.label}`);
+});
+refreshEventDecodeBtn.addEventListener("click", loadDecodedEvents);
 
 renderMode();
 loadSimulatorRegisters();
-loadSequenceDefinitions();
+loadDecodedEvents();
