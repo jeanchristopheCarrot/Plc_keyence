@@ -18,6 +18,18 @@ const readBtn = document.getElementById("readBtn");
 const writeBtn = document.getElementById("writeBtn");
 const refreshSimulatorBtn = document.getElementById("refreshSimulatorBtn");
 const simulatorTableBody = document.querySelector("#simulatorTable tbody");
+const localSimulatorRegisters = {
+  DM0: 0,
+  DM1: 100,
+  DM2: 200,
+  R0: 0,
+  R1: 1,
+  R2: 0,
+};
+
+function normalizeRegister(register) {
+  return (register || "").trim().toUpperCase();
+}
 
 function currentMode() {
   const selected = modeInputs.find((input) => input.checked);
@@ -69,7 +81,7 @@ async function apiCall(endpoint, payload) {
 }
 
 async function handleRead() {
-  const register = registerInput.value.trim();
+  const register = normalizeRegister(registerInput.value);
   if (!register) {
     appendLog("Read blocked: register is required.");
     return;
@@ -89,12 +101,30 @@ async function handleRead() {
       await loadSimulatorRegisters();
     }
   } catch (error) {
+    if (payload.mode === "simulator") {
+      const value = Object.prototype.hasOwnProperty.call(
+        localSimulatorRegisters,
+        register
+      )
+        ? localSimulatorRegisters[register]
+        : 0;
+      lastReadValue.textContent = value;
+      appendLog(
+        `Read ${register} (simulator local fallback)`,
+        {
+          value,
+          reason: error.message,
+        }
+      );
+      await loadSimulatorRegisters();
+      return;
+    }
     appendLog(`Read failed for ${register}: ${error.message}`);
   }
 }
 
 async function handleWrite() {
-  const register = registerInput.value.trim();
+  const register = normalizeRegister(registerInput.value);
   if (!register) {
     appendLog("Write blocked: register is required.");
     return;
@@ -118,6 +148,17 @@ async function handleWrite() {
       await loadSimulatorRegisters();
     }
   } catch (error) {
+    if (payload.mode === "simulator") {
+      localSimulatorRegisters[register] = value;
+      appendLog(
+        `Wrote ${value} to ${register} (simulator local fallback)`,
+        {
+          reason: error.message,
+        }
+      );
+      await loadSimulatorRegisters();
+      return;
+    }
     appendLog(`Write failed for ${register}: ${error.message}`);
   }
 }
@@ -127,7 +168,22 @@ async function loadSimulatorRegisters() {
     const response = await fetch("/api/simulator/registers");
     const data = await response.json();
     simulatorTableBody.innerHTML = "";
-    Object.entries(data.registers).forEach(([register, value]) => {
+    Object.assign(localSimulatorRegisters, data.registers || {});
+    renderSimulatorRows(localSimulatorRegisters);
+  } catch (error) {
+    renderSimulatorRows(localSimulatorRegisters);
+    appendLog(
+      "Using simulator local fallback snapshot",
+      { reason: error.message }
+    );
+  }
+}
+
+function renderSimulatorRows(registers) {
+  simulatorTableBody.innerHTML = "";
+  Object.entries(registers)
+    .sort(([a], [b]) => a.localeCompare(b))
+    .forEach(([register, value]) => {
       const row = document.createElement("tr");
       const registerCell = document.createElement("td");
       const valueCell = document.createElement("td");
@@ -137,9 +193,6 @@ async function loadSimulatorRegisters() {
       row.appendChild(valueCell);
       simulatorTableBody.appendChild(row);
     });
-  } catch (error) {
-    appendLog(`Failed to load simulator snapshot: ${error.message}`);
-  }
 }
 
 modeInputs.forEach((input) => input.addEventListener("change", renderMode));

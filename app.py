@@ -59,10 +59,12 @@ class SimulatorStore:
         }
 
     def read(self, register: str) -> int:
+        register = register.strip().upper()
         with self._lock:
             return self._registers.get(register, 0)
 
     def write(self, register: str, value: int) -> None:
+        register = register.strip().upper()
         with self._lock:
             self._registers[register] = value
 
@@ -148,7 +150,7 @@ class RequestHandler(SimpleHTTPRequestHandler):
         if payload is None:
             return
 
-        register = str(payload.get("register", "")).strip()
+        register = str(payload.get("register", "")).strip().upper()
         if not register:
             return self._send_json(
                 HTTPStatus.BAD_REQUEST, {"error": "register is required"}
@@ -192,7 +194,7 @@ class RequestHandler(SimpleHTTPRequestHandler):
         if payload is None:
             return
 
-        register = str(payload.get("register", "")).strip()
+        register = str(payload.get("register", "")).strip().upper()
         if not register:
             return self._send_json(
                 HTTPStatus.BAD_REQUEST, {"error": "register is required"}
