@@ -98,6 +98,33 @@
       </section>
 
       <section class="card">
+        <h2>Load Simulator Registers from File</h2>
+        <p class="hint">
+          Upload a Keyence project ZIP containing <code>PlcDeviceValue.csv</code>
+          or upload a CSV directly.
+        </p>
+        <div class="grid">
+          <label>
+            File
+            <input
+              id="registerFileInput"
+              type="file"
+              accept=".zip,.csv"
+            />
+          </label>
+        </div>
+        <div class="actions">
+          <button id="uploadRegisterFileBtn" type="button">
+            Upload and Load Simulator
+          </button>
+        </div>
+        <div class="result-row">
+          <span>Last Import:</span>
+          <strong id="importStatus">Not imported</strong>
+        </div>
+      </section>
+
+      <section class="card">
         <h2>Simulator Snapshot</h2>
         <button id="refreshSimulatorBtn" type="button">Refresh Registers</button>
         <table id="simulatorTable">

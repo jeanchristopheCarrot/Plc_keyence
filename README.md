@@ -31,7 +31,18 @@ http://127.0.0.1:8080
   - Read template (default: `RD {register}`)
   - Write template (default: `WR {register} {value}`)
   - Terminator (default: `\r\n`)
+- Upload a Keyence ZIP/CSV file and preload simulator registers
 - Operation log for diagnostics
+
+## Load simulator registers from file
+
+In the UI, use **Load Simulator Registers from File** and upload one of:
+
+- a Keyence project ZIP that contains `PlcDeviceValue.csv`
+- a standalone `PlcDeviceValue.csv`
+
+The app imports `DM*` and `R*` values into simulator memory so your simulator
+reads/writes start from your actual project values.
 
 ## Notes for Keyence PLC communication
 

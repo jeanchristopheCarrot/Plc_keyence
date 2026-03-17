@@ -1,18 +1,23 @@
 #!/usr/bin/env python3
 import argparse
+import csv
+import io
 import json
 import re
 import socket
 import threading
+import zipfile
 from dataclasses import dataclass
 from http import HTTPStatus
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, Tuple
 
 
 ROOT_DIR = Path(__file__).parent
 STATIC_DIR = ROOT_DIR / "static"
+MAX_UPLOAD_BYTES = 120 * 1024 * 1024
+REGISTER_PATTERN = re.compile(r"^(DM|R)\d+$")
 
 
 def decode_escapes(value: str) -> str:
@@ -72,6 +77,18 @@ class SimulatorStore:
         with self._lock:
             return dict(sorted(self._registers.items()))
 
+    def load_registers(self, registers: Dict[str, int]) -> int:
+        sanitized = {}
+        for register, value in registers.items():
+            key = register.strip().upper()
+            if not REGISTER_PATTERN.match(key):
+                continue
+            sanitized[key] = int(value)
+
+        with self._lock:
+            self._registers.update(sanitized)
+        return len(sanitized)
+
 
 class PlcTcpClient:
     def __init__(self, conn: TcpConnectionConfig, protocol: ProtocolConfig) -> None:
@@ -124,6 +141,99 @@ class PlcTcpClient:
 SIMULATOR = SimulatorStore()
 
 
+def parse_numeric_value(raw_value: str) -> Optional[int]:
+    value = raw_value.strip()
+    if not value or value == "-":
+        return None
+
+    if value.startswith("$"):
+        try:
+            return int(value[1:], 16)
+        except ValueError:
+            return None
+
+    try:
+        return int(value)
+    except ValueError:
+        try:
+            return int(float(value))
+        except ValueError:
+            return None
+
+
+def decode_csv_bytes(raw: bytes) -> str:
+    for encoding in ("utf-8-sig", "utf-16", "cp1252", "latin-1"):
+        try:
+            return raw.decode(encoding)
+        except UnicodeDecodeError:
+            continue
+    raise ValueError("Could not decode CSV content")
+
+
+def parse_plc_device_csv(raw_csv: bytes) -> Tuple[Dict[str, int], Dict[str, int]]:
+    content = decode_csv_bytes(raw_csv)
+    reader = csv.reader(io.StringIO(content))
+
+    registers: Dict[str, int] = {}
+    matched_rows = 0
+    loaded_rows = 0
+    skipped_value_rows = 0
+
+    for row in reader:
+        if len(row) < 3:
+            continue
+
+        device = row[1].strip().upper()
+        if not REGISTER_PATTERN.match(device):
+            continue
+
+        matched_rows += 1
+        parsed_value = parse_numeric_value(row[2])
+        if parsed_value is None:
+            skipped_value_rows += 1
+            continue
+
+        registers[device] = parsed_value
+        loaded_rows += 1
+
+    return registers, {
+        "matchedRows": matched_rows,
+        "loadedRows": loaded_rows,
+        "skippedRows": skipped_value_rows,
+    }
+
+
+def parse_uploaded_register_file(
+    filename: str, payload: bytes
+) -> Tuple[Dict[str, int], Dict[str, Any]]:
+    suffix = Path(filename).suffix.lower()
+    source_file = filename
+    csv_bytes = payload
+
+    if suffix == ".zip" or payload.startswith(b"PK"):
+        with zipfile.ZipFile(io.BytesIO(payload), mode="r") as zip_file:
+            names = zip_file.namelist()
+            preferred = [name for name in names if name.lower().endswith("plcdevicevalue.csv")]
+            if preferred:
+                source_file = preferred[0]
+            else:
+                candidates = [name for name in names if name.lower().endswith(".csv")]
+                if not candidates:
+                    raise ValueError("ZIP does not contain a CSV file")
+                source_file = candidates[0]
+            csv_bytes = zip_file.read(source_file)
+    elif suffix != ".csv":
+        raise ValueError("Only .zip and .csv files are supported")
+
+    registers, stats = parse_plc_device_csv(csv_bytes)
+    metadata: Dict[str, Any] = {
+        "sourceFile": source_file,
+        "fileName": filename,
+        **stats,
+    }
+    return registers, metadata
+
+
 class RequestHandler(SimpleHTTPRequestHandler):
     def __init__(self, *args: Any, **kwargs: Any) -> None:
         super().__init__(*args, directory=str(ROOT_DIR), **kwargs)
@@ -143,6 +253,8 @@ class RequestHandler(SimpleHTTPRequestHandler):
             return self._handle_read()
         if self.path == "/api/write":
             return self._handle_write()
+        if self.path == "/api/upload-register-file":
+            return self._handle_upload_register_file()
         return self._send_json(HTTPStatus.NOT_FOUND, {"error": "Unknown endpoint"})
 
     def _handle_read(self) -> None:
@@ -273,6 +385,60 @@ class RequestHandler(SimpleHTTPRequestHandler):
             ),
         )
         return client
+
+    def _handle_upload_register_file(self) -> None:
+        content_len_header = self.headers.get("Content-Length")
+        if not content_len_header:
+            return self._send_json(
+                HTTPStatus.BAD_REQUEST, {"error": "Missing Content-Length"}
+            )
+
+        try:
+            content_length = int(content_len_header)
+        except ValueError:
+            return self._send_json(
+                HTTPStatus.BAD_REQUEST, {"error": "Invalid Content-Length"}
+            )
+
+        if content_length <= 0:
+            return self._send_json(
+                HTTPStatus.BAD_REQUEST, {"error": "Uploaded file is empty"}
+            )
+
+        if content_length > MAX_UPLOAD_BYTES:
+            return self._send_json(
+                HTTPStatus.BAD_REQUEST,
+                {
+                    "error": (
+                        f"File is too large ({content_length} bytes). "
+                        f"Max supported size is {MAX_UPLOAD_BYTES} bytes."
+                    )
+                },
+            )
+
+        raw_payload = self.rfile.read(content_length)
+        filename = Path(self.headers.get("X-Filename", "upload.bin")).name
+
+        try:
+            registers, metadata = parse_uploaded_register_file(filename, raw_payload)
+            loaded_count = SIMULATOR.load_registers(registers)
+        except Exception as exc:
+            return self._send_json(
+                HTTPStatus.BAD_REQUEST,
+                {"error": f"Unable to import register file: {exc}"},
+            )
+
+        return self._send_json(
+            HTTPStatus.OK,
+            {
+                "message": "Simulator registers imported successfully",
+                "loadedRegisters": loaded_count,
+                "sourceFile": metadata["sourceFile"],
+                "matchedRows": metadata["matchedRows"],
+                "loadedRows": metadata["loadedRows"],
+                "skippedRows": metadata["skippedRows"],
+            },
+        )
 
     def _read_json_body(self) -> Optional[Dict[str, Any]]:
         content_len = self.headers.get("Content-Length")
