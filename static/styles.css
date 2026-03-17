@@ -52,6 +52,13 @@ input {
   font-size: 14px;
 }
 
+select {
+  border: 1px solid #c7ced6;
+  border-radius: 6px;
+  padding: 8px;
+  font-size: 14px;
+}
+
 .actions {
   margin-top: 14px;
   display: flex;
@@ -121,4 +128,21 @@ button:hover {
   margin: 4px 0 10px;
   font-size: 13px;
   color: #4e5a67;
+}
+
+.sequence-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 12px;
+}
+
+.sequence-card {
+  border: 1px solid #d5dce4;
+  border-radius: 8px;
+  padding: 10px;
+}
+
+.sequence-card h3 {
+  margin: 0 0 6px;
+  font-size: 15px;
 }
