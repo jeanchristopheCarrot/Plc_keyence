@@ -286,10 +286,54 @@ def is_register_address_candidate(value: int) -> bool:
 def parse_event_definitions_from_csv(raw_bytes: bytes) -> List[EventDefinition]:
     content = decode_csv_bytes(raw_bytes)
     reader = csv.reader(io.StringIO(content))
+    rows = list(reader)
+
+    # Prefer explicit Event Type sheet exports where columns are fixed:
+    # Row | Column | Register | Value | Decimal | EventTypeCode | EventTypeName | ...
+    if rows:
+        header = [str(cell).strip() for cell in rows[0]]
+        normalized = [cell.lower() for cell in header]
+        if "register" in normalized and "eventtypename" in normalized:
+            register_idx = normalized.index("register")
+            row_label_idx = normalized.index("row") if "row" in normalized else 0
+            event_name_idx = normalized.index("eventtypename")
+
+            grouped: Dict[Tuple[str, str], List[int]] = {}
+            for row in rows[1:]:
+                if len(row) <= max(register_idx, event_name_idx):
+                    continue
+                register_raw = str(row[register_idx]).strip()
+                event_name = str(row[event_name_idx]).strip()
+                row_label = (
+                    str(row[row_label_idx]).strip() if len(row) > row_label_idx else ""
+                )
+                if not register_raw.isdigit():
+                    continue
+                register = int(register_raw)
+                if not event_name or "event type - step" not in row_label.lower():
+                    continue
+
+                key = (event_name, row_label)
+                grouped.setdefault(key, []).append(register)
+
+            if grouped:
+                parsed_from_schema = [
+                    EventDefinition(
+                        name=f"{event_name} ({row_label})",
+                        start=min(registers),
+                        end=max(registers),
+                    )
+                    for (event_name, row_label), registers in grouped.items()
+                ]
+                parsed_from_schema.sort(
+                    key=lambda item: (item.start, item.end, item.name.lower())
+                )
+                return parsed_from_schema
+
     parsed: List[EventDefinition] = []
     seen = set()
 
-    for row in reader:
+    for row in rows:
         cells = [str(cell).strip() for cell in row if str(cell).strip()]
         if not cells:
             continue
@@ -340,6 +384,40 @@ def parse_event_definitions_from_csv(raw_bytes: bytes) -> List[EventDefinition]:
 
 def parse_event_definitions_from_xlsx(raw_bytes: bytes) -> List[EventDefinition]:
     workbook = load_workbook(io.BytesIO(raw_bytes), data_only=True, read_only=True)
+
+    grouped: Dict[Tuple[str, str], List[int]] = {}
+    for sheet in workbook.worksheets:
+        for row in sheet.iter_rows(values_only=True):
+            values = list(row)
+            if len(values) <= 10:
+                continue
+
+            register = values[2]
+            row_label = values[4]
+            event_name = values[10]
+
+            if not isinstance(register, int):
+                continue
+            if not isinstance(row_label, str) or "event type - step" not in row_label.lower():
+                continue
+            if not isinstance(event_name, str) or not event_name.strip():
+                continue
+
+            key = (event_name.strip(), row_label.strip())
+            grouped.setdefault(key, []).append(register)
+
+    if grouped:
+        parsed_from_schema = [
+            EventDefinition(
+                name=f"{event_name} ({row_label})",
+                start=min(registers),
+                end=max(registers),
+            )
+            for (event_name, row_label), registers in grouped.items()
+        ]
+        parsed_from_schema.sort(key=lambda item: (item.start, item.end, item.name.lower()))
+        return parsed_from_schema
+
     parsed: List[EventDefinition] = []
     seen = set()
 
