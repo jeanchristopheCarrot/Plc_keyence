@@ -32,6 +32,7 @@ http://127.0.0.1:8080
   - Write template (default: `WR {register} {value}`)
   - Terminator (default: `\r\n`)
 - Upload a Keyence ZIP/CSV file and preload simulator registers
+- Sequence dropdowns for 3100 / 3200 / 3250 / 3300 register groups
 - Operation log for diagnostics
 
 ## Load simulator registers from file
@@ -43,6 +44,18 @@ In the UI, use **Load Simulator Registers from File** and upload one of:
 
 The app imports `DM*` and `R*` values into simulator memory so your simulator
 reads/writes start from your actual project values.
+
+## Sequence dropdowns
+
+The UI includes a **Sequence Dropdowns** section with one dropdown per sequence.
+By default it provides:
+
+- Sequence 3100 (`DM3100`-`DM3199`)
+- Sequence 3200 (`DM3200`-`DM3299`)
+- Sequence 3250 (`DM3250`-`DM3349`)
+- Sequence 3300 (`DM3300`-`DM3399`)
+
+You can customize these sequence groups by editing `static/sequences.json`.
 
 ## Notes for Keyence PLC communication
 

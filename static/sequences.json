@@ -1,0 +1,26 @@
+[
+  {
+    "key": "3100",
+    "label": "Sequence 3100",
+    "start": 3100,
+    "end": 3199
+  },
+  {
+    "key": "3200",
+    "label": "Sequence 3200",
+    "start": 3200,
+    "end": 3299
+  },
+  {
+    "key": "3250",
+    "label": "Sequence 3250",
+    "start": 3250,
+    "end": 3349
+  },
+  {
+    "key": "3300",
+    "label": "Sequence 3300",
+    "start": 3300,
+    "end": 3399
+  }
+]
