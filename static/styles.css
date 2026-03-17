@@ -1,0 +1,124 @@
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  font-family: Arial, sans-serif;
+  background: #f3f5f7;
+  color: #1a1d21;
+}
+
+.container {
+  max-width: 960px;
+  margin: 0 auto;
+  padding: 24px 16px 40px;
+}
+
+h1 {
+  margin: 0;
+}
+
+.subtitle {
+  margin-top: 8px;
+  color: #4e5a67;
+}
+
+.card {
+  background: #ffffff;
+  border-radius: 10px;
+  padding: 16px;
+  margin-top: 14px;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.1);
+}
+
+.grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 12px;
+}
+
+label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 14px;
+}
+
+input {
+  border: 1px solid #c7ced6;
+  border-radius: 6px;
+  padding: 8px;
+  font-size: 14px;
+}
+
+.actions {
+  margin-top: 14px;
+  display: flex;
+  gap: 10px;
+}
+
+button {
+  border: none;
+  border-radius: 6px;
+  padding: 10px 14px;
+  font-size: 14px;
+  cursor: pointer;
+  background: #1368ce;
+  color: #ffffff;
+}
+
+button:hover {
+  background: #0f54a6;
+}
+
+.mode-switch {
+  display: flex;
+  gap: 20px;
+}
+
+.mode-switch label {
+  flex-direction: row;
+  align-items: center;
+  font-weight: 600;
+}
+
+.hidden {
+  display: none;
+}
+
+.result-row {
+  margin-top: 14px;
+  font-size: 15px;
+}
+
+#simulatorTable {
+  width: 100%;
+  margin-top: 10px;
+  border-collapse: collapse;
+}
+
+#simulatorTable th,
+#simulatorTable td {
+  border: 1px solid #d5dce4;
+  text-align: left;
+  padding: 8px;
+  font-size: 14px;
+}
+
+#log {
+  margin: 0;
+  max-height: 260px;
+  overflow: auto;
+  background: #101620;
+  color: #def0ff;
+  border-radius: 6px;
+  padding: 10px;
+  font-size: 12px;
+}
+
+.hint {
+  margin: 4px 0 10px;
+  font-size: 13px;
+  color: #4e5a67;
+}
