@@ -109,9 +109,12 @@ class SimulatorStore:
 
 @dataclass
 class EventDefinition:
-    name: str
+    sequence: str
+    label: str
     start: int
     end: int
+    row_number: int
+    event_type_code: Optional[int]
 
 
 class EventDefinitionStore:
@@ -119,9 +122,12 @@ class EventDefinitionStore:
         self._lock = threading.Lock()
         self._definitions: List[EventDefinition] = [
             EventDefinition(
-                name="Capture Canister - removal",
+                sequence="Capture Canister - Removal",
+                label="Event Type - Step 1",
                 start=23480,
                 end=23489,
+                row_number=2349,
+                event_type_code=135,
             )
         ]
 
@@ -283,192 +289,145 @@ def is_register_address_candidate(value: int) -> bool:
     return 1000 <= value <= 999999
 
 
+def parse_int(value: Any) -> Optional[int]:
+    if value is None:
+        return None
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        return value
+    if isinstance(value, float):
+        return int(value)
+    text = str(value).strip()
+    if not text:
+        return None
+    if re.fullmatch(r"-?\d+", text):
+        return int(text)
+    return None
+
+
+def parse_event_definitions_from_rows(rows: List[List[Any]]) -> List[EventDefinition]:
+    if not rows:
+        return []
+
+    grouped: Dict[Tuple[str, int], Dict[str, Any]] = {}
+    for values in rows[1:]:
+        if len(values) <= 10:
+            continue
+
+        row_number = parse_int(values[0] if len(values) > 0 else None)
+        column_letter = str(values[1]).strip().upper() if len(values) > 1 and values[1] is not None else ""
+        register = parse_int(values[2] if len(values) > 2 else None)
+        row_label = str(values[4]).strip() if len(values) > 4 and values[4] is not None else ""
+        decimal_value = parse_int(values[6] if len(values) > 6 else None)
+        event_type_code = parse_int(values[7] if len(values) > 7 else None)
+        sequence = str(values[10]).strip() if len(values) > 10 and values[10] is not None else ""
+
+        if not sequence:
+            continue
+        if register is None or not is_register_address_candidate(register):
+            continue
+        if column_letter not in {"C", "D", "E", "F", "G", "H", "I", "J", "K", "L"}:
+            continue
+        if row_number is None:
+            # Rows in this workbook always include row id; fallback keeps group stable.
+            row_number = register // 10
+
+        key = (sequence, row_number)
+        item = grouped.setdefault(
+            key,
+            {
+                "registers": [],
+                "labels": [],
+                "eventTypeCodes": [],
+                "firstDecimalValue": None,
+            },
+        )
+        item["registers"].append(register)
+        if row_label:
+            item["labels"].append(row_label)
+        if event_type_code is not None:
+            item["eventTypeCodes"].append(event_type_code)
+        if column_letter == "C" and decimal_value is not None:
+            item["firstDecimalValue"] = decimal_value
+
+    parsed: List[EventDefinition] = []
+    for (sequence, row_number), item in grouped.items():
+        registers = sorted(set(item["registers"]))
+        if len(registers) < 2:
+            continue
+
+        start = min(registers)
+        end = max(registers)
+        if end - start > 25:
+            continue
+
+        label = item["labels"][0] if item["labels"] else f"Row {row_number}"
+        if item["eventTypeCodes"]:
+            event_code = item["eventTypeCodes"][0]
+        else:
+            event_code = item["firstDecimalValue"]
+
+        parsed.append(
+            EventDefinition(
+                sequence=sequence,
+                label=label,
+                start=start,
+                end=end,
+                row_number=row_number,
+                event_type_code=event_code,
+            )
+        )
+
+    parsed.sort(key=lambda item: (item.sequence.lower(), item.start, item.row_number))
+    return parsed
+
+
 def parse_event_definitions_from_csv(raw_bytes: bytes) -> List[EventDefinition]:
     content = decode_csv_bytes(raw_bytes)
     reader = csv.reader(io.StringIO(content))
-    rows = list(reader)
+    rows = [list(row) for row in reader]
+    parsed = parse_event_definitions_from_rows(rows)
+    if parsed:
+        return parsed
 
-    # Prefer explicit Event Type sheet exports where columns are fixed:
-    # Row | Column | Register | Value | Decimal | EventTypeCode | EventTypeName | ...
-    if rows:
-        header = [str(cell).strip() for cell in rows[0]]
-        normalized = [cell.lower() for cell in header]
-        if "register" in normalized and "eventtypename" in normalized:
-            register_idx = normalized.index("register")
-            row_label_idx = normalized.index("row") if "row" in normalized else 0
-            event_name_idx = normalized.index("eventtypename")
-
-            grouped: Dict[Tuple[str, str], List[int]] = {}
-            for row in rows[1:]:
-                if len(row) <= max(register_idx, event_name_idx):
-                    continue
-                register_raw = str(row[register_idx]).strip()
-                event_name = str(row[event_name_idx]).strip()
-                row_label = (
-                    str(row[row_label_idx]).strip() if len(row) > row_label_idx else ""
-                )
-                if not register_raw.isdigit():
-                    continue
-                register = int(register_raw)
-                if not event_name or "event type - step" not in row_label.lower():
-                    continue
-
-                key = (event_name, row_label)
-                grouped.setdefault(key, []).append(register)
-
-            if grouped:
-                parsed_from_schema = [
-                    EventDefinition(
-                        name=f"{event_name} ({row_label})",
-                        start=min(registers),
-                        end=max(registers),
-                    )
-                    for (event_name, row_label), registers in grouped.items()
-                ]
-                parsed_from_schema.sort(
-                    key=lambda item: (item.start, item.end, item.name.lower())
-                )
-                return parsed_from_schema
-
-    parsed: List[EventDefinition] = []
-    seen = set()
-
+    # Fallback for simplified range-only CSV
+    range_based: List[EventDefinition] = []
     for row in rows:
         cells = [str(cell).strip() for cell in row if str(cell).strip()]
         if not cells:
             continue
-
         joined = " | ".join(cells)
         match = EVENT_RANGE_PATTERN.search(joined)
-        start = None
-        end = None
-        if match:
-            start = int(match.group(1))
-            end = int(match.group(2))
-        else:
-            nums = []
-            for cell in cells:
-                if re.fullmatch(r"\d{4,6}", cell):
-                    nums.append(int(cell))
-            if len(nums) >= 2:
-                start, end = nums[0], nums[1]
-
-        if start is None or end is None:
+        if not match:
             continue
+        start = int(match.group(1))
+        end = int(match.group(2))
         if start > end:
             start, end = end, start
-        if not is_register_address_candidate(start) or not is_register_address_candidate(
-            end
-        ):
-            continue
-        if end - start > 400:
-            continue
-
-        name = next(
-            (
-                cell
-                for cell in cells
-                if re.search(r"[A-Za-z]", cell) and not EVENT_RANGE_PATTERN.search(cell)
-            ),
-            f"Event {start}-{end}",
+        name = next((cell for cell in cells if re.search(r"[A-Za-z]", cell)), "Unknown")
+        range_based.append(
+            EventDefinition(
+                sequence=name,
+                label="Range",
+                start=start,
+                end=end,
+                row_number=start // 10,
+                event_type_code=None,
+            )
         )
-        key = (name, start, end)
-        if key in seen:
-            continue
-        seen.add(key)
-        parsed.append(EventDefinition(name=name, start=start, end=end))
-
-    parsed.sort(key=lambda item: (item.start, item.end, item.name.lower()))
-    return parsed
+    range_based.sort(key=lambda item: (item.sequence.lower(), item.start))
+    return range_based
 
 
 def parse_event_definitions_from_xlsx(raw_bytes: bytes) -> List[EventDefinition]:
     workbook = load_workbook(io.BytesIO(raw_bytes), data_only=True, read_only=True)
-
-    grouped: Dict[Tuple[str, str], List[int]] = {}
-    for sheet in workbook.worksheets:
-        for row in sheet.iter_rows(values_only=True):
-            values = list(row)
-            if len(values) <= 10:
-                continue
-
-            register = values[2]
-            row_label = values[4]
-            event_name = values[10]
-
-            if not isinstance(register, int):
-                continue
-            if not isinstance(row_label, str) or "event type - step" not in row_label.lower():
-                continue
-            if not isinstance(event_name, str) or not event_name.strip():
-                continue
-
-            key = (event_name.strip(), row_label.strip())
-            grouped.setdefault(key, []).append(register)
-
-    if grouped:
-        parsed_from_schema = [
-            EventDefinition(
-                name=f"{event_name} ({row_label})",
-                start=min(registers),
-                end=max(registers),
-            )
-            for (event_name, row_label), registers in grouped.items()
-        ]
-        parsed_from_schema.sort(key=lambda item: (item.start, item.end, item.name.lower()))
-        return parsed_from_schema
-
     parsed: List[EventDefinition] = []
-    seen = set()
-
     for sheet in workbook.worksheets:
-        for row in sheet.iter_rows(values_only=True):
-            cells = [str(cell).strip() for cell in row if cell is not None and str(cell).strip()]
-            if not cells:
-                continue
-
-            joined = " | ".join(cells)
-            match = EVENT_RANGE_PATTERN.search(joined)
-            start = None
-            end = None
-            if match:
-                start = int(match.group(1))
-                end = int(match.group(2))
-            else:
-                nums = []
-                for cell in cells:
-                    if re.fullmatch(r"\d{4,6}", cell):
-                        nums.append(int(cell))
-                if len(nums) >= 2:
-                    start, end = nums[0], nums[1]
-
-            if start is None or end is None:
-                continue
-            if start > end:
-                start, end = end, start
-            if not is_register_address_candidate(start) or not is_register_address_candidate(
-                end
-            ):
-                continue
-            if end - start > 400:
-                continue
-
-            name = next(
-                (
-                    cell
-                    for cell in cells
-                    if re.search(r"[A-Za-z]", cell)
-                    and not EVENT_RANGE_PATTERN.search(cell)
-                ),
-                f"Event {start}-{end}",
-            )
-            key = (name, start, end)
-            if key in seen:
-                continue
-            seen.add(key)
-            parsed.append(EventDefinition(name=name, start=start, end=end))
-
-    parsed.sort(key=lambda item: (item.start, item.end, item.name.lower()))
+        rows = [list(row) for row in sheet.iter_rows(values_only=True)]
+        sheet_parsed = parse_event_definitions_from_rows(rows)
+        parsed.extend(sheet_parsed)
+    parsed.sort(key=lambda item: (item.sequence.lower(), item.start, item.row_number))
     return parsed
 
 
@@ -479,6 +438,27 @@ def parse_uploaded_event_list_file(filename: str, payload: bytes) -> List[EventD
     if suffix == ".csv":
         return parse_event_definitions_from_csv(payload)
     raise ValueError("Only .xlsx, .xlsm, and .csv files are supported for event list")
+
+
+def load_default_event_definitions() -> None:
+    candidates = [
+        ROOT_DIR / "Registers_RevM_EventTypeList_WithAlarmText.xlsx",
+        ROOT_DIR / "Registers_RevM_EventTypeList_WithAlarmText.csv",
+    ]
+    for path in candidates:
+        if not path.exists():
+            continue
+        try:
+            definitions = parse_uploaded_event_list_file(path.name, path.read_bytes())
+            if definitions:
+                EVENT_DEFINITIONS.replace(definitions)
+                print(
+                    f"Loaded default event definitions from {path.name} "
+                    f"({len(definitions)} blocks)"
+                )
+                return
+        except Exception as exc:
+            print(f"Warning: unable to load default event definitions from {path.name}: {exc}")
 
 
 def decode_active_bits(words: List[int]) -> List[int]:
@@ -505,9 +485,12 @@ def decode_event_definition(definition: EventDefinition, registers: Dict[str, in
     ]
 
     return {
-        "name": definition.name,
+        "sequence": definition.sequence,
+        "label": definition.label,
         "start": definition.start,
         "end": definition.end,
+        "rowNumber": definition.row_number,
+        "eventTypeCode": definition.event_type_code,
         "wordCount": len(words),
         "eventTypeValue": event_type_value,
         "rawWords": words,
@@ -777,9 +760,11 @@ class RequestHandler(SimpleHTTPRequestHandler):
             HTTPStatus.OK,
             {
                 "message": "Event list imported successfully",
-                "loadedEvents": len(definitions),
-                "firstEvent": {
-                    "name": definitions[0].name,
+                "loadedBlocks": len(definitions),
+                "loadedSequences": len({item.sequence for item in definitions}),
+                "firstBlock": {
+                    "sequence": definitions[0].sequence,
+                    "label": definitions[0].label,
                     "start": definitions[0].start,
                     "end": definitions[0].end,
                 },
@@ -790,12 +775,25 @@ class RequestHandler(SimpleHTTPRequestHandler):
         definitions = EVENT_DEFINITIONS.get_all()
         registers = SIMULATOR.snapshot()
         decoded = [decode_event_definition(defn, registers) for defn in definitions]
+
+        grouped: Dict[str, List[Dict[str, Any]]] = {}
+        for block in decoded:
+            grouped.setdefault(block["sequence"], []).append(block)
+
+        sequences = []
+        for sequence_name, blocks in sorted(grouped.items(), key=lambda item: item[0].lower()):
+            blocks.sort(key=lambda block: block["start"])
+            sequences.append({"name": sequence_name, "blocks": blocks})
+
         return self._send_json(
             HTTPStatus.OK,
             {
-                "events": decoded,
+                "sequences": sequences,
+                "totalSequences": len(sequences),
+                "totalBlocks": len(decoded),
                 "notes": [
-                    "Decoding uses DM[start..end] words.",
+                    "Sequences come from column K of Registers_RevM_EventTypeList_WithAlarmText.",
+                    "Each EventTrigger block is decoded from one C..L row (10 DM words).",
                     "eventTypeValue=first word, outputs=words[1..4], inputs=words[5..8].",
                     "Load simulator registers from PlcDeviceValue first for accurate values.",
                 ],
@@ -830,6 +828,7 @@ class RequestHandler(SimpleHTTPRequestHandler):
 
 
 def run_server(port: int) -> None:
+    load_default_event_definitions()
     server = ThreadingHTTPServer(("0.0.0.0", port), RequestHandler)
     print(f"PLC UI available at http://127.0.0.1:{port}")
     server.serve_forever()

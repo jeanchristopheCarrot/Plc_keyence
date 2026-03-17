@@ -51,14 +51,21 @@ reads/writes start from your actual project values.
 The UI includes an **Event Type Decoder** section:
 
 - Upload `Registers_RevM_EventTypeList_WithAlarmText` (`.xlsx`, `.xlsm`, or `.csv`)
-- The app parses event names and register ranges (e.g. `23480-23489`)
-- It decodes the corresponding DM words from simulator data into:
+- Sequences are read from **column K (Sequence)**.
+- Each EventTrigger block is read from one **C..L row** (10 DM words).
+- UI provides:
+  - Sequence dropdown (column K values)
+  - EventTrigger block dropdown (per sequence)
+- It decodes each selected block from simulator DM values into:
   - event type value (first word)
   - output words (`words[1..4]`)
   - input words (`words[5..8]`)
   - active output/input bits
 
-By default, if no event list file has been uploaded, it includes:
+By default, if `Registers_RevM_EventTypeList_WithAlarmText.xlsx` exists in the
+project root, it is auto-loaded on startup.
+
+If no event list file has been uploaded/found, fallback includes:
 
 - `Capture Canister - removal` (`DM23480`-`DM23489`)
 
